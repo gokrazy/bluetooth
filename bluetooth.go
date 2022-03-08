@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/gokrazy/gokrazy"
 	"golang.org/x/sys/unix"
 )
 
@@ -36,8 +35,25 @@ func logic() error {
 		}
 	}
 
-	gokrazy.DontStartOnBoot()
+	dev := "hci0"
+	target, err := checkBluetoothInterface(dev)
+	if err != nil {
+		log.Printf("Bluetooth interface %v not found.", target)
+	} else {
+		fmt.Printf("Bluetooth device %v: %v\n", dev, target)
+	}
+
+	// gokrazy should not supervise this process even when manually started.
+	os.Exit(125)
 	return nil
+}
+
+func checkBluetoothInterface(device string) (string, error) {
+	target, err := os.Readlink("/sys/class/bluetooth/hci0")
+	if err != nil {
+		return "", fmt.Errorf("Bluetooth interface %v not found", device)
+	}
+	return target, nil
 }
 
 func loadModule(mod string) error {
