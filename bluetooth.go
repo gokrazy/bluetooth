@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -24,6 +25,10 @@ func logic() error {
 
 	// modprobe the hci_uart driver for Raspberry Pi (3B+, others)
 	for _, mod := range []string{
+		// kpp must come before ecdh_generic: on kernels where
+		// CONFIG_CRYPTO_KPP2 is a module, ecdh_generic (and everything
+		// depending on it) fails to load without crypto_register_kpp.
+		"kernel/crypto/kpp.ko",
 		"kernel/crypto/ecc.ko",
 		"kernel/crypto/ecdh_generic.ko",
 		"kernel/net/bluetooth/bluetooth.ko",
@@ -36,9 +41,10 @@ func logic() error {
 	}
 
 	dev := "hci0"
-	target, err := checkBluetoothInterface(dev)
+	const timeout = 10 * time.Second
+	target, err := waitForBluetoothInterface(dev, timeout)
 	if err != nil {
-		log.Printf("Bluetooth interface %v not found.", target)
+		log.Printf("Bluetooth interface %v not found after %v.", dev, timeout)
 	} else {
 		fmt.Printf("Bluetooth device %v: %v\n", dev, target)
 	}
@@ -48,12 +54,21 @@ func logic() error {
 	return nil
 }
 
-func checkBluetoothInterface(device string) (string, error) {
-	target, err := os.Readlink("/sys/class/bluetooth/hci0")
-	if err != nil {
-		return "", fmt.Errorf("Bluetooth interface %v not found", device)
+// waitForBluetoothInterface polls until the device appears in sysfs. hci_uart
+// probes asynchronously after the module is loaded (firmware download, BCM
+// setup), so checking only once right after load reports false negatives.
+func waitForBluetoothInterface(device string, timeout time.Duration) (string, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		target, err := os.Readlink(filepath.Join("/sys/class/bluetooth", device))
+		if err == nil {
+			return target, nil
+		}
+		if time.Now().After(deadline) {
+			return "", err
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
-	return target, nil
 }
 
 func loadModule(mod string) error {
